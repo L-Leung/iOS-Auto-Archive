@@ -1,0 +1,300 @@
+#!/bin/bash
+
+#------------------------ functions ------------------------
+#usage
+function FuncUsage() {
+	echo "#--------------------------------------------"
+	echo "# `basename ${0}`: usage: "
+	echo "#		-c NAME 工程的configuration,默认为Release。"
+	echo "#		-o PATH 生成的ipa文件输出的文件夹（必须为已存在的文件路径）默认为工程根路径下的 build/ipa-build 文件夹中"
+	echo "#		-t NAME 需要编译的target的名称"
+	echo "#		-w      编译workspace"
+	echo "#		-s NAME 对应workspace下需要编译的scheme"
+	echo "#		-n      编译前是否先clean工程"
+	echo "#		-p      平台标识符"
+	echo "#		-u      是否上传蒲公英"
+	echo "#--------------------------------------------"
+}
+
+#增加 build 计数
+function FuncAddBuild() {
+	build_config=${1}
+	if [ ${build_config} = DailyBuild -o ${build_config} = Release ]; then
+	    echo "Bumping build number..."
+	    plist=${project_path}/${build_scheme}/Info.plist
+
+		#increment the build number (ie 115 to 116)
+	    buildnum=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "${plist}")
+	    if [[ "${buildnum}" == "" ]]; then
+	        echo "No build number in $plist"
+	        exit 2
+	    fi
+
+	    buildnum=$(expr $buildnum + 1)
+	    /usr/libexec/Plistbuddy -c "Set CFBundleVersion $buildnum" "${plist}"
+	    echo "Bumped build number to $buildnum"
+
+	else
+	    echo ${build_config} " build - Not bumping build number."
+	fi
+}
+
+#------------------------ begin ------------------------
+#没有输入参数
+if [ $# -lt 1 ];then
+	FuncUsage
+	exit 2
+fi
+
+#第一个参数必须是文件夹路径
+if [ ! -d ${1} ];then
+	echo "Error! The first param -- ${1} -- must be a directory."
+	exit 2
+else
+	cd $1
+fi
+
+#工程绝对路径
+project_path=$(pwd)
+
+#编译的configuration，默认为Release
+build_config=Release
+
+param_pattern=":p:nc:o:t:ws::u"
+OPTIND=2
+should_clean="NO"
+should_upload="NO"
+platform_id="iPhone"
+while getopts ${param_pattern} optname
+  do
+    case "$optname" in       
+	  "n")        
+		should_clean="YES"		
+        ;;
+      "u")
+		should_upload="YES"
+		;;
+      "p")
+		tmp_optind=${OPTIND}
+		tmp_optname=${optname}
+		tmp_optarg=${OPTARG}
+
+		OPTIND=${OPTIND}-1
+		if getopts ${param_pattern} optname ;then
+			echo  "Error argument value for option $tmp_optname"
+			exit 2
+		fi
+		OPTIND=${tmp_optind}
+
+		platform_id=${tmp_optarg}
+		
+        ;;
+      "c")        
+		tmp_optind=${OPTIND}
+		tmp_optname=${optname}
+		tmp_optarg=${OPTARG}
+		OPTIND=${OPTIND}-1
+		if getopts ${param_pattern} optname ;then
+			echo  "Error argument value for option $tmp_optname"
+			exit 2
+		fi
+		OPTIND=${tmp_optind}
+
+		build_config=${tmp_optarg}
+		
+        ;;
+      "o")
+		tmp_optind=${OPTIND}
+		tmp_optname=${optname}
+		tmp_optarg=${OPTARG}
+
+		OPTIND=${OPTIND}-1
+		if getopts ${param_pattern} optname ;then
+			echo  "Error argument value for option $tmp_optname"
+			exit 2
+		fi
+		OPTIND=${tmp_optind}
+
+
+		cd ${tmp_optarg}
+		output_path=$(pwd)
+		cd ${project_path}
+
+		if [ ! -d ${output_path} ];then
+			echo "Error!The value of option o must be an exist directory."
+			exit 2
+		fi
+
+        ;;
+	  "w")
+		workspace_name='*.xcworkspace'
+		ls ${project_path}/${workspace_name} &>/dev/null
+		rtnValue=$?
+		if [ $rtnValue = 0 ];then
+			build_workspace=$(echo $(basename ${project_path}/$workspace_name))
+		else
+			echo  "Error!Current path is not a xcode workspace.Please check, or do not use -w option."
+			exit 2
+		fi
+		
+        ;;
+	  "s")
+		tmp_optind=${OPTIND}
+		tmp_optname=${optname}
+		tmp_optarg=${OPTARG}
+
+		OPTIND=${OPTIND}-1
+		if getopts ${param_pattern} optname ;then
+			echo  "Error argument value for option $tmp_optname"
+			exit 2
+		fi
+		OPTIND=${tmp_optind}
+
+		build_scheme=${tmp_optarg}
+		
+        ;;
+	  "t")
+		tmp_optind=${OPTIND}
+		tmp_optname=${optname}
+		tmp_optarg=${OPTARG}
+
+		OPTIND=${OPTIND}-1
+		if getopts ${param_pattern} optname ;then
+			echo  "Error argument value for option $tmp_optname"
+			exit 2
+		fi
+		OPTIND=$tmp_optind
+
+		build_target=$tmp_optarg
+		
+        ;;
+
+      "?")
+        echo "Error! Unknown option $OPTARG"
+		exit 2
+        ;;
+      ":")
+        echo "Error! No argument value for option $OPTARG"
+		exit 2
+        ;;
+      *)
+      # Should not occur
+        echo "Error! Unknown error while processing options"
+		exit 2
+        ;;
+    esac
+  done
+
+#build文件夹路径
+build_path=${project_path}/build
+#生成的app文件目录
+appdirname=${build_config}-iphoneos
+#编译后文件路径(仅当编译workspace时才会用到)
+compiled_path=${build_path}/${appdirname}
+
+#是否clean
+if [ "$should_clean" = "YES" ];then
+	xcodebuild clean -configuration ${build_config}
+fi
+
+#组合编译命令
+build_cmd='xcodebuild'
+
+if [ "$build_workspace" != "" ];then
+	#编译workspace
+	if [ "${build_scheme}" = "" ];then
+		echo "Error! Must provide a scheme by -s option together when using -w option to compile a workspace."
+		exit 2
+	fi
+	isWorkSpace="YES"
+	build_cmd=${build_cmd}' -workspace '${build_workspace}' -scheme '${build_scheme}' -configuration '${build_config}' CONFIGURATION_BUILD_DIR='${compiled_path}' ONLY_ACTIVE_ARCH=NO'
+
+else
+	#编译project
+	build_cmd=${build_cmd}' -configuration '${build_config}
+	isWorkSpace="NO"
+	if [ "$build_target" != "" ];then
+		build_cmd=${build_cmd}' -target '${build_target}
+	fi
+	
+fi
+
+#进入工程路径
+cd ${project_path}
+
+#增加 build 计数
+FuncAddBuild ${build_config}
+
+#编译工程
+${build_cmd} || exit
+
+#进入build路径
+cd ${build_path}
+
+#创建ipa-build文件夹
+if [ -d ./ipa-build ];then
+	rm -rf ipa-build
+fi
+mkdir ipa-build
+
+#app文件名称
+appname=$(basename ./${appdirname}/*.app)
+#通过app文件名获得工程target名字
+target_name=$(echo $appname | awk -F. '{print $1}')
+#app文件中Info.plist文件路径
+app_infoplist_path=${build_path}/${appdirname}/${appname}/Info.plist
+#取版本号
+bundleShortVersion=$(/usr/libexec/PlistBuddy -c "print CFBundleShortVersionString" ${app_infoplist_path})
+#取build值
+bundleVersion=$(/usr/libexec/PlistBuddy -c "print CFBundleVersion" ${app_infoplist_path})
+#取displayName
+displayName=$(/usr/libexec/PlistBuddy -c "print CFBundleName" ${app_infoplist_path})
+#IPA名称
+ipa_name="${target_name}_${platform_id}_v${bundleShortVersion}_${build_config}_${bundleVersion}_$(date +"%Y%m%d")"
+
+#xcrun打包
+xcrun -sdk iphoneos PackageApplication -v ./${appdirname}/*.app -o ${build_path}/ipa-build/${ipa_name}.ipa || exit
+
+if [ "${output_path}" != "" ];then
+	cp ${build_path}/ipa-build/${ipa_name}.ipa $output_path/${ipa_name}.ipa
+	echo "Copy ipa file successfully to the path $output_path/${ipa_name}.ipa"
+else
+	output_path=${build_path}/ipa-build/${ipa_name}.ipa 
+fi
+
+echo "🐾 -------------------------------------------"
+echo "🐾  Project Path : "${project_path}
+echo "🐾  Target : "${build_target}
+echo "🐾  Scheme : "${build_scheme}
+echo "🐾  Configuration : "${build_config}
+echo "🐾  IsWorkSpace : "${isWorkSpace}
+echo "🐾  Clean Before Build : "${should_clean}
+echo "🐾  Appname : "${appname}
+echo "🐾  target_name : "${target_name}
+echo "🐾  Version : v"${bundleShortVersion}" build_"${bundleVersion}
+echo "🐾  displayName : "${displayName}
+echo "🐾  ipa_name : "${ipa_name}
+echo "🐾  output_path : "${output_path}
+echo "🐾 -------------------------------------------"
+
+doneMsg="打包完成!"
+if [ -f ${output_path} ]; then
+	if [ "${should_upload}" = "YES" ]; then
+		echo "Begin Upload to pgyer.com... Please wait..."
+		curl -F "file=@${output_path}" \
+			 -F "uKey=******" \
+			 -F "_api_key=******" \
+			 -F "password=******" \
+			 http://www.pgyer.com/apiv1/app/upload
+
+		doneMsg="上传完成!"
+	fi
+fi
+
+terminal-notifier -title "build ${displayName}" -message "${doneMsg}"
+
+
+
+
+
+
