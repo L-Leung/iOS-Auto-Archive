@@ -15,11 +15,19 @@ iOS自动打包脚本
 -u      是否上传蒲公英
 ```
 
-> 例如 ``` shell
+> 例如
+``` shell
 ./iOSAutoBuild ./ -c Release -t target -w -s scheme -n -u
 ```
 
-如果要自动上传蒲公英, 先把 "uKey=******" / _api_key=******" / "password=******" 改成自己的.
+如果要自动上传蒲公英, 先把
+
+``` 
+uKey=****** 
+_api_key=******
+password=****** 
+```
+改成自己的.
 
 
 
